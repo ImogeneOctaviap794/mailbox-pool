@@ -1,0 +1,44 @@
+protocols = imap lmtp
+listen = *, ::
+login_greeting = __MAIL_HOSTNAME__ IMAP ready
+
+mail_home = /var/vmail/%d/%n
+mail_location = maildir:/var/vmail/%d/%n/Maildir
+mail_uid = 5000
+mail_gid = 5000
+first_valid_uid = 5000
+last_valid_uid = 5000
+
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+
+ssl = required
+ssl_cert = </etc/ssl/mail/fullchain.pem
+ssl_key = </etc/ssl/mail/privkey.pem
+
+passdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+userdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+service imap-login {
+  inet_listener imap {
+    port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+
+service lmtp {
+  inet_listener lmtp {
+    address = 0.0.0.0
+    port = 24
+  }
+}

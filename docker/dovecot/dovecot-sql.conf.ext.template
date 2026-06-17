@@ -1,0 +1,24 @@
+driver = pgsql
+connect = host=__DB_HOST__ dbname=__DB_NAME__ user=__DB_USER__ password=__DB_PASSWORD__
+default_pass_scheme = BLF-CRYPT
+
+password_query = \
+  SELECT m.password_hash AS password \
+  FROM mailboxes m \
+  JOIN domains d ON d.id = m.domain_id \
+  WHERE m.local_part = lower('%n') \
+    AND d.domain = lower('%d') \
+    AND m.enabled = TRUE \
+    AND d.enabled = TRUE
+
+user_query = \
+  SELECT 5000 AS uid, \
+         5000 AS gid, \
+         '/var/vmail/' || d.domain || '/' || m.local_part AS home, \
+         'maildir:/var/vmail/' || d.domain || '/' || m.local_part || '/Maildir' AS mail \
+  FROM mailboxes m \
+  JOIN domains d ON d.id = m.domain_id \
+  WHERE m.local_part = lower('%n') \
+    AND d.domain = lower('%d') \
+    AND m.enabled = TRUE \
+    AND d.enabled = TRUE

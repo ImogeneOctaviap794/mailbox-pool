@@ -1,0 +1,5 @@
+hosts = __DB_HOST__
+dbname = __DB_NAME__
+user = __DB_USER__
+password = __DB_PASSWORD__
+query = SELECT 1 FROM domains WHERE domain = lower('%s') AND enabled = TRUE

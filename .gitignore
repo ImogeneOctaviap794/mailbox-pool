@@ -1,0 +1,34 @@
+# ---- Secrets / runtime config ----
+.env
+.env.*
+!.env.example
+
+# ---- TLS certificates & keys ----
+certs/*.pem
+certs/*.key
+certs/*.crt
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- Node / frontend ----
+node_modules/
+dist/
+.vite/
+*.local
+
+# ---- Editor / OS ----
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ---- Backups / scratch ----
+*.bak
+*.bak-*
+*.orig
+*.tmp
