@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import email
 import hashlib
+import heapq
 import os
 import re
+import time
 from datetime import datetime, timezone
 from email.header import decode_header
 from email.message import Message
@@ -20,6 +22,18 @@ from typing import Any
 
 
 VMAIL_ROOT = Path(os.getenv("VMAIL_ROOT", "/var/vmail"))
+
+# Cap bytes read when only headers / verification code / snippet are needed.
+# A verification mail's code lives at the very top; reading the whole body of a
+# large attachment mail just to grab a 6-digit code wastes memory and CPU.
+_MAX_PARSE_BYTES = int(os.getenv("MAILDIR_MAX_PARSE_BYTES", str(256 * 1024)))
+
+# Short-TTL cache for latest_code: the接码 workload polls the same mailbox
+# repeatedly; caching the result for a couple of seconds collapses bursts of
+# identical scans into one filesystem walk.
+_CODE_CACHE_TTL = float(os.getenv("LATEST_CODE_CACHE_TTL", "3.0"))
+_CODE_CACHE_MAX = 5000
+_CODE_CACHE: dict[str, tuple[float, Any]] = {}
 
 # Heuristic verification code patterns (priority order).
 # Whole string match wins first; then contextual capture.
@@ -72,23 +86,47 @@ def _uid_for_path(p: Path) -> str:
     return hashlib.sha1(rel.encode("utf-8")).hexdigest()[:12]
 
 
+def _scan_with_mtime(d: Path) -> list[tuple[str, float]]:
+    """Single scandir pass returning (path, mtime). scandir caches stat info on
+    the DirEntry so this avoids the double stat (is_file + sort key) that
+    iterdir()+p.stat() incurred."""
+    out: list[tuple[str, float]] = []
+    try:
+        with os.scandir(d) as it:
+            for e in it:
+                if e.name.startswith("."):
+                    continue
+                try:
+                    if e.is_file(follow_symlinks=False):
+                        out.append((e.path, e.stat().st_mtime))
+                except OSError:
+                    continue
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    return out
+
+
 def _collect_files(mbox_dir: Path) -> list[Path]:
-    files: list[Path] = []
-    for sub in ("new", "cur"):
-        d = mbox_dir / sub
-        if not d.is_dir():
-            continue
-        for p in d.iterdir():
-            if p.is_file() and not p.name.startswith("."):
-                files.append(p)
-    # newest first by mtime
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return files
+    entries = _scan_with_mtime(mbox_dir / "new") + _scan_with_mtime(mbox_dir / "cur")
+    entries.sort(key=lambda t: t[1], reverse=True)
+    return [Path(p) for p, _ in entries]
 
 
-def _parse(p: Path) -> Message:
+def _recent_files(mbox_dir: Path, n: int) -> list[Path]:
+    """Return the newest n files without fully sorting the whole mailbox
+    (heapq.nlargest is O(m) memory / O(m log n) time vs O(m log m) full sort)."""
+    entries = _scan_with_mtime(mbox_dir / "new") + _scan_with_mtime(mbox_dir / "cur")
+    top = heapq.nlargest(n, entries, key=lambda t: t[1])
+    return [Path(p) for p, _ in top]
+
+
+def _parse(p: Path, max_bytes: int | None = _MAX_PARSE_BYTES) -> Message:
+    """Parse a Maildir file. By default only the first max_bytes are read, which
+    is enough for headers, snippet and verification-code extraction; pass
+    max_bytes=None to read the full message (used when rendering a mail)."""
     with p.open("rb") as fh:
-        return email.message_from_binary_file(fh)
+        data = fh.read() if max_bytes is None else fh.read(max_bytes)
+    return email.message_from_bytes(data)
 
 
 def _extract_text(msg: Message) -> str:
@@ -200,7 +238,7 @@ def get_message(email_addr: str, uid: str) -> dict[str, Any] | None:
         return None
     for p in _collect_files(mbox):
         if _uid_for_path(p) == uid:
-            msg = _parse(p)
+            msg = _parse(p, max_bytes=None)
             body = _extract_text(msg)
             return {
                 "uid": uid,
@@ -259,11 +297,11 @@ def extract_codes(text: str) -> list[str]:
     return seen[:5]
 
 
-def latest_code(email_addr: str, max_scan: int = 20) -> dict[str, Any] | None:
+def _latest_code_uncached(email_addr: str, max_scan: int) -> dict[str, Any] | None:
     mbox = _mailbox_dir(email_addr)
     if not mbox.is_dir():
         return None
-    for p in _collect_files(mbox)[:max_scan]:
+    for p in _recent_files(mbox, max_scan):
         try:
             msg = _parse(p)
         except Exception:
@@ -281,3 +319,20 @@ def latest_code(email_addr: str, max_scan: int = 20) -> dict[str, Any] | None:
                 "uid": _uid_for_path(p),
             }
     return None
+
+
+def latest_code(email_addr: str, max_scan: int = 20) -> dict[str, Any] | None:
+    key = f"{email_addr.lower()}:{max_scan}"
+    now = time.monotonic()
+    cached = _CODE_CACHE.get(key)
+    if cached is not None and now - cached[0] < _CODE_CACHE_TTL:
+        return cached[1]
+    result = _latest_code_uncached(email_addr, max_scan)
+    if len(_CODE_CACHE) >= _CODE_CACHE_MAX:
+        # drop expired entries; if still full, clear outright (cheap, rare)
+        for k in [k for k, v in _CODE_CACHE.items() if now - v[0] >= _CODE_CACHE_TTL]:
+            _CODE_CACHE.pop(k, None)
+        if len(_CODE_CACHE) >= _CODE_CACHE_MAX:
+            _CODE_CACHE.clear()
+    _CODE_CACHE[key] = (now, result)
+    return result

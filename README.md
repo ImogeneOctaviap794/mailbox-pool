@@ -389,6 +389,28 @@ docker compose up -d
 - 该平台只负责**接收邮件**，不支持通过 SMTP 对外发信
 - `.env` 与 `certs/*.pem` 含敏感信息，已在 `.gitignore` 中排除，请勿提交
 
+# 性能与扩容
+
+面向"接码 / 临时邮箱"场景（大量邮箱、平时空闲、突发并发收信与收码）做了如下调优。
+**邮箱数量本身不是瓶颈**——9w 邮箱元数据仅约 30MB，inode 占用约 3%，单机可轻松支撑
+10w+ 乃至更多；真正的命脉是收信投递并发与读码接口吞吐。
+
+**admin-api（读码吞吐 + 内存）**
+- 以 gunicorn 多 worker 运行（`WEB_CONCURRENCY`/`ADMIN_API_WORKERS`，默认 4），吃满多核
+- `--max-requests` 周期性回收 worker，杜绝内存只涨不降（实测常驻内存从 ~3.7GB 降到 ~190MB）
+- Maildir 读取用单次 `scandir` + `heapq.nlargest` 取最近 N 封，开销与邮箱邮件总数解耦
+- 解析默认只读邮件前 `MAILDIR_MAX_PARSE_BYTES`（默认 256KB），避免大附件邮件吃内存
+- `latest-code` 加 `LATEST_CODE_CACHE_TTL`（默认 3s）短缓存，挡掉高频轮询的重复扫描
+- compose 层 `mem_limit: 2g` 硬顶兜底
+
+**收信链路（Postfix / Dovecot 并发）**
+- Postfix `default_process_limit=300`、`lmtp_destination_concurrency_limit=50`，应对突发投递
+- Dovecot 预热 LMTP 进程池（`process_min_avail`）、auth worker 池、imap-login 高性能模式
+
+**再往上扩（按需）**
+- 第 1 档：PgBouncer 连接池、邮件存储独立挂盘、Maildir 三级 hash
+- 第 2 档：Dovecot 多实例 + 共享/对象存储、Postfix 无状态化 + LB 按域分片、PG 主从读写分离
+
 # License
 
 MIT

@@ -12,4 +12,15 @@ COPY app /app/app
 
 EXPOSE 8080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Multi-worker (utilise all cores under GIL) + periodic worker recycling so a
+# leaked/bloated worker is replaced instead of growing unbounded (the old single
+# uvicorn process climbed to ~3.7 GB). Worker count overridable via WEB_CONCURRENCY.
+ENV WEB_CONCURRENCY=4
+CMD ["gunicorn", "app.main:app", \
+     "-k", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8080", \
+     "--max-requests", "800", \
+     "--max-requests-jitter", "200", \
+     "--timeout", "60", \
+     "--graceful-timeout", "30", \
+     "--access-logfile", "-"]

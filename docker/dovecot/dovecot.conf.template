@@ -2,6 +2,10 @@ protocols = imap lmtp
 listen = *, ::
 login_greeting = __MAIL_HOSTNAME__ IMAP ready
 
+# --- concurrency tuning for bursty inbound (接码 workload) ---
+default_process_limit = 200
+default_client_limit = 2000
+
 mail_home = /var/vmail/%d/%n
 mail_location = maildir:/var/vmail/%d/%n/Maildir
 mail_uid = 5000
@@ -27,6 +31,9 @@ userdb {
 }
 
 service imap-login {
+  # High-performance mode: reuse login processes instead of one-per-connection.
+  service_count = 0
+  process_min_avail = 2
   inet_listener imap {
     port = 143
   }
@@ -41,4 +48,18 @@ service lmtp {
     address = 0.0.0.0
     port = 24
   }
+  # Keep warm LMTP processes ready and let each handle several concurrent
+  # deliveries, so a burst of inbound verification mails lands without
+  # spawning cost or queueing.
+  process_min_avail = 4
+  client_limit = 10
+}
+
+service auth {
+  # Auth lookups hit Postgres; a small worker pool avoids serialising them.
+  client_limit = 2000
+}
+
+service auth-worker {
+  process_limit = 30
 }

@@ -77,6 +77,10 @@ services:
       CF_ZONE_ID: ${CF_ZONE_ID}
       ROOT_DOMAINS: ${ROOT_DOMAINS:-}
       VMAIL_ROOT: /var/vmail
+      WEB_CONCURRENCY: ${ADMIN_API_WORKERS:-4}
+    # Hard memory ceiling: with gunicorn --max-requests recycling each worker
+    # stays bounded, but this protects the (memory-tight) host from any runaway.
+    mem_limit: 2g
     # NOTE: admin-api needs write access to vmail in order to hard-delete
     # mailbox/domain directories. It does NOT need to read as vmail uid
     # because the container runs as root by default.
