@@ -407,6 +407,9 @@ docker compose up -d
 - Postfix `default_process_limit=300`、`lmtp_destination_concurrency_limit=50`，应对突发投递
 - Dovecot 预热 LMTP 进程池（`process_min_avail`）、auth worker 池、imap-login 高性能模式
 
+**线上实测**：约 9.4w 邮箱单机运行，admin-api 常驻内存稳定在 ~210MB，
+读码接口响应 ~2ms，持续收信约 2.4 封/秒，磁盘/inode 占用平稳。
+
 **再往上扩（按需）**
 - 第 1 档：PgBouncer 连接池、邮件存储独立挂盘、Maildir 三级 hash
 - 第 2 档：Dovecot 多实例 + 共享/对象存储、Postfix 无状态化 + LB 按域分片、PG 主从读写分离
