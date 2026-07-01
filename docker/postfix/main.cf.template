@@ -44,8 +44,27 @@ mailbox_size_limit = 0
 # Raise the per-service process cap (default 100) so many senders can deliver
 # verification mails simultaneously during a burst.
 default_process_limit = 300
-# Parallel LMTP deliveries into Dovecot (default 20).
-lmtp_destination_concurrency_limit = 50
-lmtp_destination_recipient_limit = 50
+# Parallel LMTP deliveries into Dovecot (default 20). Matched to Dovecot's
+# service lmtp process_limit=500/client_limit=100 so Postfix never tries to
+# push more concurrent LMTP sessions than Dovecot is sized to accept.
+lmtp_destination_concurrency_limit = 150
+lmtp_destination_recipient_limit = 150
 # Do not throttle the injection rate.
 in_flow_delay = 0s
+
+# --- bound bounce/queue lifetime (接码场景不需要长期重试退信) ---
+# NOTE: bounce_service_name=discard was tried here but is NOT valid — the
+# built-in discard(8) daemon speaks the delivery_request_protocol (it's a
+# transport), while bounce_service_name requires a delivery_status_protocol
+# daemon (bounce(8)/defer(8)/trace(8)). Pointing bounce_service_name at it
+# produces "discard or trace service failure" warnings and does not actually
+# suppress bounce generation. There is no supported Postfix knob to fully
+# disable DSN/bounce generation for LMTP delivery failures.
+#
+# Instead: bound how long undeliverable mail (including bounce notices) is
+# retried before Postfix gives up and drops it. Outbound port 25 is blocked
+# by the hosting provider, so any bounce this host tries to send will NEVER
+# succeed — no point holding it (and retrying) for the 5-day default.
+maximal_queue_lifetime = 4h
+bounce_queue_lifetime = 30m
+delay_warning_time = 0

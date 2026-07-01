@@ -6,6 +6,22 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # Tuned for a dedicated 16-core/62G host (was: stock Postgres defaults,
+    # i.e. shared_buffers=128MB, max_connections=100 — far too small once
+    # admin-api runs many workers and the box is dedicated to this stack).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_connections=400
+    mem_limit: 8g
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -58,6 +74,11 @@ services:
       - ./certs:/etc/ssl/mail:ro
     ports:
       - "25:25"
+    # Safety-net ceiling only (dedicated host has plenty of RAM). With
+    # bounce_service_name=discard in main.cf, postfix should normally sit
+    # at tens of MB; this just stops any future queue anomaly from ever
+    # exhausting host memory.
+    mem_limit: 16g
     networks:
       - mailnet
 
@@ -77,10 +98,11 @@ services:
       CF_ZONE_ID: ${CF_ZONE_ID}
       ROOT_DOMAINS: ${ROOT_DOMAINS:-}
       VMAIL_ROOT: /var/vmail
-      WEB_CONCURRENCY: ${ADMIN_API_WORKERS:-4}
-    # Hard memory ceiling: with gunicorn --max-requests recycling each worker
-    # stays bounded, but this protects the (memory-tight) host from any runaway.
-    mem_limit: 2g
+      WEB_CONCURRENCY: ${ADMIN_API_WORKERS:-12}
+    # Dedicated 16-core/62G host: sized to use most cores (12 workers) with
+    # generous headroom per worker. gunicorn --max-requests recycling still
+    # keeps each worker bounded; this ceiling is a safety net, not a target.
+    mem_limit: 12g
     # NOTE: admin-api needs write access to vmail in order to hard-delete
     # mailbox/domain directories. It does NOT need to read as vmail uid
     # because the container runs as root by default.
